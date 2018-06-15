@@ -2,6 +2,8 @@ import smbus
 import datetime
 import os
 from time import sleep
+from evdev import InputDevice, categorize, ecodes
+from threading import Thread
 
 def delay(time):
     sleep(time/1000.0)
@@ -9,6 +11,83 @@ def delay(time):
 def delayMicroseconds(time):
     sleep(time/1000000.0)
 
+mode = "Test"
+data = "...wait..."
+
+class KeyListener(Thread):
+#    def __init__(self,mode):
+#        Thread.__init__(self)
+#        self.mode = mode
+
+    def run(self):
+        global mode
+        global data
+        dev = InputDevice('/dev/input/event0')
+        for event in dev.read_loop():
+            if event.type == ecodes.EV_KEY:
+                print(mode, event.code, event.value)
+                if event.code in (113,114,115):
+                    if mode == "Time":
+                        if event.code == 113:
+                            mode = "Pandora"
+                            data = "starting..."
+                        if event.code in (114,115):
+                            mode = "Volume"
+                            data = "75% just kidding"
+                    if mode == "Volume":
+                        if event.code == 114:
+                            mode = "Volume"
+                            data = "TurnDownForWhat?"
+                        if event.code == 115:
+                            mode = "Volume"
+                            data = "CrankItUp!"
+
+def main():
+    screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
+    screen.enable_backlight()
+
+    global mode
+    global data
+    mode = "Time"
+    data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
+
+    myKeyListener = KeyListener()
+    myKeyListener.daemon = True
+    myKeyListener.start()
+    
+    while True:
+        screen.display_data(mode, data)
+        if mode != "Time":
+            sleep(4)
+            mode = "Time"
+            data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
+
+            #screen.clear()
+            #screen.disable_backlight()
+
+def song_change():
+	new_song = '''something from pianobar'''
+	l1display(new_song.parse_artist(), scroll_left_slow)
+	l2display(new_song.parse_song(), scroll_left_slow)
+	sleep(5)
+
+def volume_change():
+	l1display("Volume")
+	l2display('''something from alsamixer''')
+	sleep(2)
+
+def menu():
+	current="Alarm"
+	l1display("-> Alarm")
+	l2display("   Music")
+
+	#on PlusPress():
+
+def alarm_set():
+    return
+
+def alarm_execute():
+    return
 
 class Screen():
 
@@ -88,11 +167,4 @@ class Screen():
        
 
 if __name__ == "__main__":
-    screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
-    screen.enable_backlight()
-    while True:
-	line1 = datetime.datetime.now()
-	line2 = "Sleepy Time!"
-        screen.display_data(str(line1.hour) + ":" + str(line1.minute),line2)
-        sleep(15)
-
+    main()
