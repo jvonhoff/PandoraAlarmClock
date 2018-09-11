@@ -1,7 +1,7 @@
 import smbus
 import datetime
 import os
-from time import sleep
+from time import time, sleep
 from evdev import InputDevice, categorize, ecodes
 from threading import Thread
 
@@ -20,37 +20,53 @@ def revertToTime():
     mode = "Time"
     data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
 
-class KeyListener(Thread):
-#    def __init__(self,mode):
-#        Thread.__init__(self)
-#        self.mode = mode
+class ScreenUpdater(Thread):
+    def __init__(self,mode):
+        Thread.__init__(self)
+        self.mode = mode
+    
+    def run(self):
+        global mode
+        global data
 
-    # def run(self):
-        # global mode
-        # global data
-        # dev = InputDevice('/dev/input/event0')
-        # for event in dev.read_loop():
-            # if event.type == ecodes.EV_KEY:
-                # print(mode, event.code, event.value)
-                # if event.code in (113,114,115):
-                    # if mode == "Time":
-                        # if event.code == 113:
-                            # print("mute pressed during Time")
-                            # mode = "Pandora"
-                            # data = "starting..."
-                        # if event.code in (114,115):
-                            # print("up/down pressed during Time")
-                            # mode = "Volume"
-                            # data = "75% just kidding"
-                    # if mode == "Volume":
-                        # if event.code == 114:
-                            # print("down pressed during Volume")
-                            # mode = "Volume"
-                            # data = "TurnDownForWhat?"
-                        # if event.code == 115:
-                            # print("up pressed during Volume")
-                            # mode = "Volume"
-                            # data = "CrankItUp!"
+        screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
+        screen.enable_backlight()
+
+        while True:
+            screen.display_data(mode, data)
+            time.sleep(5.0 - time.time() % 5.0)
+
+class KeyListener(Thread):
+    def __init__(self,mode):
+        Thread.__init__(self)
+        self.mode = mode
+
+    def run(self):
+        global mode
+        global data
+        dev = InputDevice('/dev/input/event0')
+        for event in dev.read_loop():
+            if event.type == ecodes.EV_KEY:
+                print(mode, event.code, event.value)
+                if event.code in (113,114,115):
+                    if mode == "Time":
+                        if event.code == 113:
+                            print("mute pressed during Time")
+                            mode = "Pandora"
+                            data = "starting..."
+                        if event.code in (114,115):
+                            print("up/down pressed during Time")
+                            mode = "Volume"
+                            data = "75% just kidding"
+                    if mode == "Volume":
+                        if event.code == 114:
+                            print("down pressed during Volume")
+                            mode = "Volume"
+                            data = "TurnDownForWhat?"
+                        if event.code == 115:
+                            print("up pressed during Volume")
+                            mode = "Volume"
+                            data = "CrankItUp!"
 
 def handleKeypress(code):
     global mode
@@ -61,24 +77,31 @@ def handleKeypress(code):
         if mode == "Time":
             mode = "Pandora"
             return
-        else if mode == "Pandora":
+        elif mode == "Pandora":
             mode = "Alarm"
             return
-        else if mode
+        elif mode == "Alarm":
+            mode = "Time"
+            return
 
 def main():
-    screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
-    screen.enable_backlight()
 
     global mode
     global data
     mode = "Time"
     data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
 
-    # myKeyListener = KeyListener()
-    # myKeyListener.daemon = True
-    # myKeyListener.start()
+    myScreenUpdater = ScreenUpdater()
+    myScreenUpdater.daemon = True
+    myScreenUpdater.start()
 
+    myKeyListener = KeyListener()
+    myKeyListener.daemon = True
+    myKeyListener.start()
+    
+
+
+'''
     dev = InputDevice('/dev/input/event0')
     for event in dev.read_loop():
         if event.type == ecodes.EV_KEY:
@@ -112,6 +135,7 @@ def main():
 
             #screen.clear()
             #screen.disable_backlight()
+'''
 
 def song_change():
 	new_song = '''something from pianobar'''
