@@ -17,24 +17,10 @@ data = "...wait..."
 def revertToTime():
     global mode
     global data
+    global screen
     mode = "Time"
     data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
-
-class ScreenUpdater(Thread):
-    def __init__(self,mode):
-        Thread.__init__(self)
-        self.mode = mode
-    
-    def run(self):
-        global mode
-        global data
-
-        screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
-        screen.enable_backlight()
-
-        while True:
-            screen.display_data(mode, data)
-            time.sleep(5.0 - time.time() % 5.0)
+    screen.display_data(mode, data)
 
 class KeyListener(Thread):
     def __init__(self,mode):
@@ -44,7 +30,9 @@ class KeyListener(Thread):
     def run(self):
         global mode
         global data
+
         dev = InputDevice('/dev/input/event0')
+
         for event in dev.read_loop():
             if event.type == ecodes.EV_KEY:
                 print(mode, event.code, event.value)
@@ -68,6 +56,9 @@ class KeyListener(Thread):
                             mode = "Volume"
                             data = "CrankItUp!"
 
+            screen.display_data(mode, data)
+
+
 def handleKeypress(code):
     global mode
     global data
@@ -88,6 +79,11 @@ def main():
 
     global mode
     global data
+    global screen
+
+    screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
+    screen.enable_backlight()
+
     mode = "Time"
     data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
 
