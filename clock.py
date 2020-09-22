@@ -1,9 +1,11 @@
 import smbus
 import datetime
 import os
+import sys
 from time import time, sleep
 from evdev import InputDevice, categorize, ecodes
-from threading import Thread
+from threading import Thread,Timer
+from subprocess import call,check_output,Popen
 
 def delay(time):
     sleep(time/1000.0)
@@ -13,14 +15,75 @@ def delayMicroseconds(time):
 
 mode = "Test"
 data = "...wait..."
+counter = 0
+bouncer = 1
+alarm_time = "99:99"
 
-def revertToTime():
-    global mode
-    global data
-    global screen
-    mode = "Time"
-    data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
-    screen.display_data(mode, data)
+def revert():
+    global mode, data, screen
+
+    curr_time = "{}".format(str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute).rjust(2,'0'))
+    if playing == True:
+        mode = " - Music"
+        data = get_song_data()
+    else:
+        mode = ""
+        data = ""
+
+    screen.display_data("{}{}".format(curr_time,mode), data)
+
+def music_control(parm):
+    global data, playing
+
+    if "play" in parm:
+        if playing == False:
+            call(["pianobar"])
+        else:
+            call(["mpc", "next"])
+
+        playing = True
+        data = "Starting Music..."
+
+    if "stop" in parm:
+        playing = False
+        call(["mpc", "stop"])
+        data = "          Play >"
+
+def alarm_control(parm):
+    global alarm_time
+    if parm == "set":
+        alarm_time = "21:53"
+        call("echo '{}' > /media/Alarm/.alarm_time".format(alarm_time), shell=True)
+    if parm == "delete":
+        alarm_time = "99:99"
+        call("rm /media/Alarm/.alarm_time", shell=True)
+        
+
+def get_song_data():
+    song_info = check_output(["mpc","-q","current"]).decode('unicode_escape').encode('ascii','ignore')
+    #print(song_info)
+    return song_info.replace('\n','')
+
+def show_volume():
+    vol_check = check_output(["mpc", "volume"]).splitlines()[0]
+    return "{:^16}".format(vol_check[7:])
+
+def scroll(text):
+    global counter, bouncer
+
+    if len(text) <= 16:
+        return text
+    else:
+        if len(text) - abs(counter) > 16 :
+            counter += 1 * bouncer
+            print("start at {}".format(counter))
+        else:
+            bouncer = bouncer * -1
+            counter += 1 * bouncer
+            print("start at {}".format(counter))
+        print(text[counter:])
+        return text[counter:]
+
 
 class KeyListener(Thread):
     def __init__(self,mode):
@@ -28,135 +91,149 @@ class KeyListener(Thread):
         self.mode = mode
 
     def run(self):
-        global mode
-        global data
+        global mode, data, screen
 
         dev = InputDevice('/dev/input/event0')
 
         for event in dev.read_loop():
             if event.type == ecodes.EV_KEY:
-                print(mode, event.code, event.value)
+                if event.value != 0L:
+                    continue
                 if event.code in (113,114,115):
-                    if mode == "Time":
-                        if event.code == 113:
-                            print("mute pressed during Time")
-                            mode = "Pandora"
-                            data = "starting..."
-                        if event.code in (114,115):
-                            print("up/down pressed during Time")
-                            mode = "Volume"
-                            data = "75% just kidding"
-                    if mode == "Volume":
-                        if event.code == 114:
-                            print("down pressed during Volume")
-                            mode = "Volume"
-                            data = "TurnDownForWhat?"
-                        if event.code == 115:
-                            print("up pressed during Volume")
-                            mode = "Volume"
-                            data = "CrankItUp!"
-
-            screen.display_data(mode, data)
-
+                    print(mode, event.code, event.value)
+                    try:
+                        t.cancel()
+                    except:
+                        print("no timer")
+                    t = Timer(5, revert)
+                    t.start()
+                    
+                    handleKeypress(event.code)
 
 def handleKeypress(code):
-    global mode
-    global data
+    global mode, data
     
     if code==113:
-        print("mute pressed while mode was %s",mode)
-        if mode == "Time":
-            mode = "Pandora"
+        if mode == "":
+            mode = " - Music"
+            data = "< Stop    Play >"
             return
-        elif mode == "Pandora":
-            mode = "Alarm"
+
+        elif "Music" in mode:
+            if "Play" in data:
+                mode = " - Alarm"
+                data = "< Set   Delete >"
+            else:
+                mode = " - Music"
+                data = "< Stop    Play >"
             return
-        elif mode == "Alarm":
-            mode = "Time"
+
+        elif "Alarm" in mode:
+            mode = ""
+            data = ""
+            return
+
+    if code==114:
+        print("down in {} mode".format(mode))
+        if mode == "":
+            mode = " - Volume"
+            data = show_volume()
+            return
+
+        elif "Volume" in mode:
+            call(["mpc", "-q", "volume", "-5"])
+            data = show_volume()
+            return
+
+        elif "Music" in mode:
+            # stop music
+            music_control("stop")
+            return
+
+        elif "Alarm" in mode:
+            alarm_control("set")
+            return
+
+    if code==115:
+        print("up in {} mode".format(mode))
+        if mode == "":
+            mode = " - Volume"
+            data = show_volume()
+            return
+
+        elif "Volume" in mode:
+            call(["mpc", "-q", "volume", "+5"])
+            data = show_volume()
+            return
+
+        elif "Music" in mode:
+            # play or skip music
+            music_control("play")
+            return
+
+        elif "Alarm" in mode:
+            alarm_control("delete")
             return
 
 def main():
 
-    global mode
-    global data
-    global screen
+    global mode, data, screen, playing, alarm_time
+    
+    playing = False
+    
+    try:
+        call("mpc ls Local\ media | mpc add", shell=True)
+        call(["mpc","-q","volume","30"])
+        call(["mpc","-q","random","on"])
+    except:
+        print("Music not available!")
 
+    try:
+        alarm_time = check_output(["cat","/media/Alarm/.alarm_time"]).replace('\n','')
+    except:
+        alarm_time = "99:99"
+        
     screen = Screen(bus=1, addr=0x27, cols=16, rows=2)
+    screen.disable_backlight()
     screen.enable_backlight()
 
-    mode = "Time"
-    data = (str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute))
+    curr_time = "{}".format(str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute).rjust(2,'0'))
+    mode = ""
+    data = ""
+    screen.display_data("{}{}".format(curr_time,mode), data)
 
-    myScreenUpdater = ScreenUpdater()
-    myScreenUpdater.daemon = True
-    myScreenUpdater.start()
-
-    myKeyListener = KeyListener()
+    myKeyListener = KeyListener(mode=mode)
     myKeyListener.daemon = True
     myKeyListener.start()
     
+    while True:
+        curr_time = "{}".format(str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute).rjust(2,'0'))
+        data_disp = scroll(data)
+        #print(data_disp)
+        #print("time = {} mode = {} data = {}".format(curr_time, mode, data))
+        try:
+            oldTime
+            oldMode
+            oldData
+        except:
+            oldTime = curr_time
+            oldMode = mode
+            oldData = data_disp
+        if oldTime != curr_time or oldMode != mode or oldData != data_disp:
+            oldTime = curr_time
+            oldMode = mode
+            oldData = data_disp
+            #print("time = {}, {} mode = {}, {} data = {}, {}".format(curr_time, oldTime, mode, oldMode, data_disp, oldData))
+            
+            print("alarm = {} current = {}".format(alarm_time, curr_time))
+            if curr_time[0:5] == alarm_time[0:5]:
+                music_control("play")
+                sleep(3)
+                data_disp = "WAKE UP!"
+            screen.display_data("{}{}".format(curr_time,mode), data_disp)
 
-
-'''
-    dev = InputDevice('/dev/input/event0')
-    for event in dev.read_loop():
-        if event.type == ecodes.EV_KEY:
-            print(mode, event.code, event.value)
-            if event.code in (113,114,115):
-                if mode == "Time":
-                    if event.code == 113:
-                        print("mute pressed during Time")
-                        mode = "Pandora"
-                        data = "starting..."
-                    if event.code in (114,115):
-                        print("up/down pressed during Time")
-                        mode = "Volume"
-                        data = "75% just kidding"
-                if mode == "Volume":
-                    if event.code == 114:
-                        print("down pressed during Volume")
-                        mode = "Volume"
-                        data = "TurnDownForWhat?"
-                    if event.code == 115:
-                        print("up pressed during Volume")
-                        mode = "Volume"
-                        data = "CrankItUp!"
-        screen.display_data(mode, data)
-        print(mode, data)
-        if mode != "Time":
-            try:
-                t.cancel()
-            t = Timer(4, revertToTime)
-            t.start()
-
-            #screen.clear()
-            #screen.disable_backlight()
-'''
-
-def song_change():
-	new_song = '''something from pianobar'''
-	l1display(new_song.parse_artist(), scroll_left_slow)
-	l2display(new_song.parse_song(), scroll_left_slow)
-	sleep(5)
-
-def volume_change():
-	l1display("Volume")
-	l2display('''something from alsamixer''')
-	sleep(2)
-
-def menu():
-	current="Alarm"
-	l1display("-> Alarm")
-	l2display("   Music")
-
-	#on PlusPress():
-
-def alarm_set():
-    return
-
-def alarm_execute():
-    return
-
+        sleep(1)
+        
 class Screen():
 
     enable_mask = 1<<2
@@ -236,3 +313,5 @@ class Screen():
 
 if __name__ == "__main__":
     main()
+
+
