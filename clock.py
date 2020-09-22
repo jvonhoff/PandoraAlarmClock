@@ -38,7 +38,7 @@ def music_control(parm):
 
     if "play" in parm:
         if playing == False:
-            call(["pianobar"])
+            Popen("pianobar", close_fds=True)
             os.mkfifo(fifo_path)
             fifo = open(fifo_path, "w")
         else:
