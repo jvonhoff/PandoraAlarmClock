@@ -18,6 +18,7 @@ data = "...wait..."
 counter = 0
 bouncer = 1
 alarm_time = "99:99"
+fifo_path = "/tmp/pianobar"
 
 def revert():
     global mode, data, screen
@@ -33,20 +34,22 @@ def revert():
     screen.display_data("{}{}".format(curr_time,mode), data)
 
 def music_control(parm):
-    global data, playing
+    global data, playing, fifo
 
     if "play" in parm:
         if playing == False:
             call(["pianobar"])
+            os.mkfifo(fifo_path)
+            fifo = open(fifo_path, "w")
         else:
-            call(["mpc", "next"])
+            fifo.write("n") #next
 
         playing = True
         data = "Starting Music..."
 
     if "stop" in parm:
         playing = False
-        call(["mpc", "stop"])
+        fifo.write("q") #quit
         data = "          Play >"
 
 def alarm_control(parm):
@@ -60,7 +63,14 @@ def alarm_control(parm):
         
 
 def get_song_data():
-    song_info = check_output(["mpc","-q","current"]).decode('unicode_escape').encode('ascii','ignore')
+    with open('/home/pi/.config/pianobar/nowplaying') as playstatus:
+        line = playstatus.readline()
+        if re.search('artist=',line):
+            artist = line.replace('artist=','')
+        if re.search('title=',line):
+            title = line.replace('title=','')
+        
+    song_info = "{} - {}".format(artist,title).decode('unicode_escape').encode('ascii','ignore')
     #print(song_info)
     return song_info.replace('\n','')
 
