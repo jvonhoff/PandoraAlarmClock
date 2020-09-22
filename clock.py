@@ -1,7 +1,6 @@
 import smbus
 import datetime
-import os
-import sys
+import os, sys, re
 from time import time, sleep
 from evdev import InputDevice, categorize, ecodes
 from threading import Thread,Timer
@@ -16,16 +15,17 @@ def delayMicroseconds(time):
 mode = "Test"
 data = "...wait..."
 counter = 0
-bouncer = 1
+bouncer = -1
 alarm_time = "99:99"
 fifo_path = "/tmp/pianobar"
 
 def revert():
-    global mode, data, screen
+    global mode, data, screen, counter
 
     curr_time = "{}".format(str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute).rjust(2,'0'))
     if playing == True:
-        mode = " - Music"
+        mode = "   Music"
+	counter = 0
         data = get_song_data()
     else:
         mode = ""
@@ -34,28 +34,39 @@ def revert():
     screen.display_data("{}{}".format(curr_time,mode), data)
 
 def music_control(parm):
-    global data, playing, fifo
+    global data, playing, pianobar, fifo
 
+    if not os.path.exists(fifo_path):
+	os.mkfifo(fifo_path)
+	print("fifo created")
+
+ 
     if "play" in parm:
+	print("play passed")
         if playing == False:
-            Popen("pianobar", close_fds=True)
-            os.mkfifo(fifo_path)
-            fifo = open(fifo_path, "w")
-        else:
+            pianobar = Popen("pianobar", close_fds=True)
+	    sleep(2.0)
+	    print("Pianobar started with PID {}".format(pianobar.pid))
+    	    fifo = open(fifo_path, "w")
+	else:
             fifo.write("n") #next
 
         playing = True
         data = "Starting Music..."
+	#sleep(5)
+	#data = get_song_data()
 
     if "stop" in parm:
+	print("stop passed")
         playing = False
         fifo.write("q") #quit
+	pianobar.terminate()
         data = "          Play >"
 
 def alarm_control(parm):
     global alarm_time
     if parm == "set":
-        alarm_time = "21:53"
+        alarm_time = "16:13"
         call("echo '{}' > /media/Alarm/.alarm_time".format(alarm_time), shell=True)
     if parm == "delete":
         alarm_time = "99:99"
@@ -63,20 +74,23 @@ def alarm_control(parm):
         
 
 def get_song_data():
+    global counter
+    artist = ""
+    title = ""
     with open('/home/pi/.config/pianobar/nowplaying') as playstatus:
-        line = playstatus.readline()
-        if re.search('artist=',line):
-            artist = line.replace('artist=','')
-        if re.search('title=',line):
-            title = line.replace('title=','')
+        for line in playstatus:
+            if re.search('artist=',line):
+                artist = line.replace('artist=','')
+            if re.search('title=',line):
+                title = line.replace('title=','')
         
     song_info = "{} - {}".format(artist,title).decode('unicode_escape').encode('ascii','ignore')
-    #print(song_info)
     return song_info.replace('\n','')
 
 def show_volume():
-    vol_check = check_output(["mpc", "volume"]).splitlines()[0]
-    return "{:^16}".format(vol_check[7:])
+    vol_check = check_output(["sh", "-c", "'pactl list sinks | grep '^[[:space:]]Volume:' | head -n $(( $SINK + 1 )) | tail -n 1 '"])
+    vol = re.search(".*\ \d*%.*", vol_check)
+    return "{:^16}".format(vol)
 
 def scroll(text):
     global counter, bouncer
@@ -84,14 +98,11 @@ def scroll(text):
     if len(text) <= 16:
         return text
     else:
-        if len(text) - abs(counter) > 16 :
-            counter += 1 * bouncer
-            print("start at {}".format(counter))
-        else:
-            bouncer = bouncer * -1
-            counter += 1 * bouncer
-            print("start at {}".format(counter))
-        print(text[counter:])
+	if counter == 0 or len(text) - counter < 16:
+	    bouncer = bouncer * -1
+	counter += 1 * bouncer
+	    
+        #print(text[counter:])
         return text[counter:]
 
 
@@ -125,16 +136,16 @@ def handleKeypress(code):
     
     if code==113:
         if mode == "":
-            mode = " - Music"
+            mode = "   Music"
             data = "< Stop    Play >"
             return
 
         elif "Music" in mode:
             if "Play" in data:
-                mode = " - Alarm"
+                mode = "   Alarm"
                 data = "< Set   Delete >"
             else:
-                mode = " - Music"
+                mode = "   Music"
                 data = "< Stop    Play >"
             return
 
@@ -146,12 +157,12 @@ def handleKeypress(code):
     if code==114:
         print("down in {} mode".format(mode))
         if mode == "":
-            mode = " - Volume"
+            mode = "   Volume"
             data = show_volume()
             return
 
         elif "Volume" in mode:
-            call(["mpc", "-q", "volume", "-5"])
+	    call(["pactl","set-sink-volume","alsa_output.usb-1130_USB_AUDIO-00.analog-stereo","-5%"])
             data = show_volume()
             return
 
@@ -167,12 +178,12 @@ def handleKeypress(code):
     if code==115:
         print("up in {} mode".format(mode))
         if mode == "":
-            mode = " - Volume"
+            mode = "   Volume"
             data = show_volume()
             return
 
         elif "Volume" in mode:
-            call(["mpc", "-q", "volume", "+5"])
+	    call(["pactl","set-sink-volume","alsa_output.usb-1130_USB_AUDIO-00.analog-stereo","+5%"])
             data = show_volume()
             return
 
@@ -192,9 +203,7 @@ def main():
     playing = False
     
     try:
-        call("mpc ls Local\ media | mpc add", shell=True)
-        call(["mpc","-q","volume","30"])
-        call(["mpc","-q","random","on"])
+        call(["pactl","set-sink-volume","alsa_output.usb-1130_USB_AUDIO-00.analog-stereo","25%"])
     except:
         print("Music not available!")
 
@@ -218,9 +227,9 @@ def main():
     
     while True:
         curr_time = "{}".format(str(datetime.datetime.now().hour) + ":" + str(datetime.datetime.now().minute).rjust(2,'0'))
+        if playing == True:
+            data = get_song_data()
         data_disp = scroll(data)
-        #print(data_disp)
-        #print("time = {} mode = {} data = {}".format(curr_time, mode, data))
         try:
             oldTime
             oldMode
@@ -235,7 +244,7 @@ def main():
             oldData = data_disp
             #print("time = {}, {} mode = {}, {} data = {}, {}".format(curr_time, oldTime, mode, oldMode, data_disp, oldData))
             
-            print("alarm = {} current = {}".format(alarm_time, curr_time))
+            #print("alarm = {} current = {}".format(alarm_time, curr_time))
             if curr_time[0:5] == alarm_time[0:5]:
                 music_control("play")
                 sleep(3)
